@@ -112,11 +112,11 @@
     </div>
 
     <script>
+        
         // ==========================================
-        // FEATURE 1: RANDOM XKCD FETCHING
+        // FEATURE 1: RANDOM XKCD FETCHING (FIXED)
         // ==========================================
         function fetchComic() {
-            // A simple CORS proxy to fetch and read the raw HTML of xkcd.com
             const proxyUrl = "https://api.allorigins.win/get?url=";
             const targetUrl = encodeURIComponent("https://c.xkcd.com/random/comic/");
 
@@ -126,28 +126,35 @@
                     throw new Error('Network response error.');
                 })
                 .then(data => {
-                    // Parse the raw HTML we just fetched
                     const parser = new DOMParser();
                     const doc = parser.parseFromString(data.contents, 'text/html');
-                    
-                    // Locate the comic image asset inside xkcd's page structure
                     const comicImg = doc.querySelector('#comic img');
                     
-                    if (comicImg && comicImg.src) {
-                        // Apply the raw image link to our local img tag
-                        document.getElementById('comic').src = comicImg.src;
+                    if (comicImg) {
+                        // Extract the raw string from the src attribute
+                        let imgSrc = comicImg.getAttribute('src');
+                        
+                        if (imgSrc) {
+                            // If the URL starts with '//', prepend 'https:'
+                            if (imgSrc.startsWith('//')) {
+                                imgSrc = 'https:' + imgSrc;
+                            } 
+                            // If it's a root-relative path, prepend the base domain
+                            else if (imgSrc.startsWith('/')) {
+                                imgSrc = 'https://xkcd.com' + imgSrc;
+                            }
+                            
+                            document.getElementById('comic').src = imgSrc;
+                        }
                     }
                 })
                 .catch(err => {
                     console.error("Failed to fetch comic:", err);
-                    // Fallback image in case the scrape fails
                     document.getElementById('comic').src = "https://imgs.xkcd.com/comics/barrels_of_fun.png";
                 });
         }
         
-        // Trigger the comic fetch immediately when the page loads
         fetchComic();
-
 
         // ==========================================
         // FEATURE 2: GMOD PROGRESS CALLBACKS
