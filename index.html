@@ -12,47 +12,60 @@
             overflow: hidden;
             background-color: #000000;
             display: flex;
-            flex-direction: column; /* Stack comic and bar vertically */
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             color: #ffffff;
-            font-family: 'Courier New', Courier, monospace; /* Classic GMod vibe */
-            user-select: none; /* Prevent text selection */
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
         }
 
-        /* --- Comic Display Styling --- */
         #comic-container {
-            flex: 1; /* Occupy all remaining space */
+            flex: 1;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             padding: 20px;
             width: 100%;
-            height: 100%;
+        }
+
+        #comic-loading {
+            color: #888;
+            font-size: 16px;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.4; }
         }
 
         img#comic {
-            max-width: 90%; /* Leave a small margin */
-            max-height: 80vh; /* Don't hit the progress bar */
+            display: none;
+            max-width: 90%;
+            max-height: 80vh;
             object-fit: contain;
-            border: 2px solid #ffffff; /* Frame the comic */
+            border: 2px solid #ffffff;
             box-shadow: 0 0 15px rgba(255,255,255,0.3);
         }
 
-        /* --- GMod Progress Bar Styling --- */
+        img#comic.loaded {
+            display: block;
+        }
+
+        /* Extra bottom padding raises the bar above GMod's native UI overlay */
         #progress-area {
             width: 100%;
-            height: 100px;
             background-color: rgba(20, 20, 20, 0.9);
             border-top: 1px solid #444;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: 10px 40px;
+            padding: 12px 40px 90px;
         }
 
-        /* The background bar */
         #bar-background {
             width: 100%;
             height: 25px;
@@ -63,15 +76,13 @@
             margin-bottom: 10px;
         }
 
-        /* The actual progress color */
         #bar-fill {
-            width: 0%; /* Starts at 0 */
+            width: 0%;
             height: 100%;
-            background-color: #f7931e; /* Classic GMod orange */
-            transition: width 0.1s linear; /* Smooth movement */
+            background-color: #f7931e;
+            transition: width 0.1s linear;
         }
 
-        /* Text overlaying the bar (Percentage) */
         #bar-text {
             position: absolute;
             width: 100%;
@@ -83,7 +94,6 @@
             text-shadow: 1px 1px 2px #000;
         }
 
-        /* Sub-status text (filename) */
         #status-ticker {
             font-size: 12px;
             color: #aaa;
@@ -97,12 +107,11 @@
 </head>
 <body>
 
-    <!-- 1. Middle Area: Comic -->
     <div id="comic-container">
-        <img id="comic" src="" alt="Fetching random comic...">
+        <span id="comic-loading">Fetching comic...</span>
+        <img id="comic" src="" alt="">
     </div>
 
-    <!-- 2. Bottom Area: GMod Progress -->
     <div id="progress-area">
         <div id="bar-background">
             <div id="bar-fill"></div>
@@ -112,121 +121,124 @@
     </div>
 
     <script>
-        
         // ==========================================
-        // FEATURE 1: RANDOM XKCD FETCHING (FIXED)
+        // FEATURE 1: RANDOM XKCD COMIC
+        // Uses the xkcd JSON API so we get structured data directly
+        // instead of trying to scrape HTML through a proxy.
+        // Two proxies are tried in order so one can cover the other's outages.
         // ==========================================
-        function fetchComic() {
-            const proxyUrl = "https://api.allorigins.win/get?url=";
-            const targetUrl = encodeURIComponent("https://c.xkcd.com/random/comic/");
 
-            fetch(proxyUrl + targetUrl)
-                .then(response => {
-                    if (response.ok) return response.json();
-                    throw new Error('Network response error.');
-                })
-                .then(data => {
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(data.contents, 'text/html');
-                    const comicImg = doc.querySelector('#comic img');
-                    
-                    if (comicImg) {
-                        // Extract the raw string from the src attribute
-                        let imgSrc = comicImg.getAttribute('src');
-                        
-                        if (imgSrc) {
-                            // If the URL starts with '//', prepend 'https:'
-                            if (imgSrc.startsWith('//')) {
-                                imgSrc = 'https:' + imgSrc;
-                            } 
-                            // If it's a root-relative path, prepend the base domain
-                            else if (imgSrc.startsWith('/')) {
-                                imgSrc = 'https://xkcd.com' + imgSrc;
-                            }
-                            
-                            document.getElementById('comic').src = imgSrc;
-                        }
-                    }
-                })
-                .catch(err => {
-                    console.error("Failed to fetch comic:", err);
-                    document.getElementById('comic').src = "https://imgs.xkcd.com/comics/barrels_of_fun.png";
-                });
+        function fetchWithTimeout(url, ms) {
+            var controller = new AbortController();
+            var id = setTimeout(function() { controller.abort(); }, ms);
+            return fetch(url, { signal: controller.signal }).finally(function() {
+                clearTimeout(id);
+            });
         }
-        
-        fetchComic();
+
+        function fetchXkcdJson(comicUrl) {
+            var encoded = encodeURIComponent(comicUrl);
+            var proxies = [
+                "https://corsproxy.io/?url=" + encoded,
+                "https://api.allorigins.win/get?url=" + encoded,
+            ];
+
+            function tryNext(i) {
+                if (i >= proxies.length) {
+                    return Promise.reject(new Error("All proxies failed"));
+                }
+                return fetchWithTimeout(proxies[i], 6000)
+                    .then(function(res) {
+                        if (!res.ok) throw new Error("HTTP " + res.status);
+                        return res.json();
+                    })
+                    .then(function(data) {
+                        // allorigins wraps JSON in { contents: "..." }; corsproxy returns raw
+                        return data.contents ? JSON.parse(data.contents) : data;
+                    })
+                    .catch(function() { return tryNext(i + 1); });
+            }
+
+            return tryNext(0);
+        }
+
+        function showFallback() {
+            var img = document.getElementById("comic");
+            img.onload = function() {
+                document.getElementById("comic-loading").style.display = "none";
+                img.classList.add("loaded");
+            };
+            img.onerror = function() {
+                document.getElementById("comic-loading").textContent = "Comic unavailable";
+            };
+            img.src = "https://imgs.xkcd.com/comics/barrels_of_fun.png";
+        }
+
+        fetchXkcdJson("https://xkcd.com/info.0.json")
+            .then(function(latest) {
+                var maxNum = latest.num;
+                var randomNum;
+                do {
+                    randomNum = Math.floor(Math.random() * maxNum) + 1;
+                } while (randomNum === 404); // comic 404 doesn't exist
+
+                return fetchXkcdJson("https://xkcd.com/" + randomNum + "/info.0.json");
+            })
+            .then(function(comic) {
+                var img = document.getElementById("comic");
+                img.onload = function() {
+                    document.getElementById("comic-loading").style.display = "none";
+                    img.classList.add("loaded");
+                };
+                img.onerror = showFallback;
+                img.src = comic.img;
+                img.alt = comic.alt;
+            })
+            .catch(function(err) {
+                console.error("Failed to fetch comic:", err);
+                showFallback();
+            });
 
         // ==========================================
         // FEATURE 2: GMOD PROGRESS CALLBACKS
         // ==========================================
-        
-        // Internal variables to track progress state
+
         var filesTotal = 0;
         var filesNeeded = 0;
-        var progressPercent = 0;
 
-        // UI references
-        const barFill = document.getElementById('bar-fill');
-        const barText = document.getElementById('bar-text');
-        const statusTicker = document.getElementById('status-ticker');
+        var barFill   = document.getElementById("bar-fill");
+        var barText   = document.getElementById("bar-text");
+        var statusTicker = document.getElementById("status-ticker");
 
-        /**
-         * Helper: Recalculates and updates the UI
-         */
         function updateProgressBar() {
-            if (filesTotal > 0) {
-                // Calculation: (Total - Remaining) / Total
-                progressPercent = Math.floor(((filesTotal - filesNeeded) / filesTotal) * 100);
-            } else {
-                progressPercent = 0;
-            }
-
-            // Apply percentage to the visual width and text label
-            barFill.style.width = progressPercent + "%";
-            barText.innerHTML = "Loading... (" + progressPercent + "%)";
+            var pct = filesTotal > 0
+                ? Math.floor(((filesTotal - filesNeeded) / filesTotal) * 100)
+                : 0;
+            barFill.style.width = pct + "%";
+            barText.textContent = "Loading... (" + pct + "%)";
         }
 
-        // --- NATIVE GMOD CALLBACK FUNCTIONS (MUST USE THESE NAMES) ---
-
-        /**
-         * Called ONCE when the connection handshake is complete.
-         * 'total' is the integer count of *all* files the client needs to connect.
-         */
         function SetFilesTotal(total) {
             filesTotal = total;
-            // The initial need is equal to the initial total
             filesNeeded = total;
             updateProgressBar();
         }
 
-        /**
-         * Called every time a *new* file transfer begins.
-         * 'fileName' is the path of the asset (e.g., "maps/ph_office_v2.bsp")
-         */
         function DownloadingFile(fileName) {
-            statusTicker.innerHTML = "Downloading: " + fileName;
+            statusTicker.textContent = "Downloading: " + fileName;
         }
 
-        /**
-         * Called when *any* pending asset finishes transferring.
-         * 'needed' is the remaining number of files the client still requires.
-         */
         function SetFilesNeeded(needed) {
             filesNeeded = needed;
             updateProgressBar();
         }
 
-        /**
-         * Called when the engine changes states (e.g., "Mounting Addons", "Creating Lua...").
-         * 'status' is the raw string from the gray GMod engine status box.
-         */
         function SetStatusChanged(status) {
-            // When we start mounting, files are done, so force the bar to 100%
             if (status.indexOf("Mounting") > -1 || status.indexOf("Starting") > -1) {
                 barFill.style.width = "100%";
-                barText.innerHTML = "Loading... (100%)";
+                barText.textContent = "Loading... (100%)";
             }
-            statusTicker.innerHTML = status;
+            statusTicker.textContent = status;
         }
     </script>
 </body>
